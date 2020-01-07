@@ -4,34 +4,22 @@ import pytest
 
 @pytest.fixture
 def foo(paramark):
-    Options = namedlist('Options', (
+    Foo = namedlist('Foo', (
         ('some_option', 42),
         ('another_option', 'test'),
     ))
 
-    options = Options(**paramark)
-
-    class Foo:
-        some_option = options.some_option
-        another_option = options.another_option
-
-    return Foo()
+    return Foo(**paramark)
 
 
 @pytest.fixture
 def bar(paramark):
-    Options = namedlist('Options', (
+    Bar = namedlist('Bar', (
         ('some_option', True),
         ('another_option', False),
     ))
 
-    options = Options(**paramark)
-
-    class Bar:
-        some_option = options.some_option
-        another_option = options.another_option
-
-    return Bar()
+    return Bar(**paramark)
 
 
 def test_default(foo, bar):
