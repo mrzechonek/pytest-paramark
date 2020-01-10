@@ -79,3 +79,10 @@ def test_parametrized_mixed(foo, bar, qux):
     assert foo.some_option == 0x420
     assert bar.another_option == 5
     assert qux == 'qux'
+
+
+@pytest.mark.foo(some_option=3)
+@pytest.mark.foo(some_option=1)
+@pytest.mark.foo(some_option=2)
+def test_paramark_closest(foo):
+    assert foo.some_option == 2

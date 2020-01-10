@@ -8,7 +8,9 @@ def paramark(request):
     kwargs = {}
 
     for marker in request.node.iter_markers(request.fixturename):
-        kwargs.update(marker.kwargs)
+        tmp = dict(**marker.kwargs)
+        tmp.update(kwargs)
+        kwargs = tmp
 
     return kwargs
 
