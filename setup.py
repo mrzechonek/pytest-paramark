@@ -13,7 +13,7 @@ def read(fname):
 
 setup(
     name='pytest-paramark',
-    version='0.1.1',
+    version='0.2.0',
     author='Michał Lowas-Rzechonek',
     author_email='michal@rzechonek.net',
     maintainer='Michał Lowas-Rzechonek',
