@@ -1,26 +1,26 @@
-from namedlist import namedlist
-
 import pytest
+
+
+class Foo:
+    def __init__(self, some_option=42, another_option='test'):
+        self.some_option = some_option
+        self.another_option = another_option
+
+
+class Bar:
+    def __init__(self, some_option=True, another_option=False):
+        self.some_option = some_option
+        self.another_option = another_option
 
 
 # fmt: off
 @pytest.fixture(indirect=True)
 def foo(request):
-    Foo = namedlist('Foo', (
-        ('some_option', 42),
-        ('another_option', 'test'),
-    ))
-
     return Foo(**request.param)
 
 
 @pytest.fixture(indirect=True)
 def bar(request):
-    Bar = namedlist('Bar', (
-        ('some_option', True),
-        ('another_option', False),
-    ))
-
     return Bar(**request.param)
 
 
