@@ -1,14 +1,16 @@
 import sys
+from copy import deepcopy
 from collections import defaultdict
-
-from _pytest import fixtures, python
-from _pytest.mark import Mark, ParameterSet
-from _pytest.mark.structures import normalize_mark_list
+import functools
 
 import pytest
+from _pytest import fixtures, python
+from _pytest.mark import Mark, MarkDecorator, ParameterSet
+from _pytest.mark.structures import normalize_mark_list
+from typing import Iterable, Union, Mapping
 
 
-def parametrize_indirect(metafunc, mark):
+def collapse_indirect(metafunc, mark):
     # Transform this:
     #
     #     @pytest.mark.parametrize(
@@ -31,39 +33,34 @@ def parametrize_indirect(metafunc, mark):
     #     )
 
     if mark.name != "parametrize":
-        return
+        return mark
 
-    argnames, params = ParameterSet._for_parametrize(
-        mark.args[0],
-        mark.args[1],
+    _argnames, params = ParameterSet._for_parametrize(
+        argnames=mark.args[0],
+        argvalues=mark.args[1],
         func=metafunc.function,
         config=metafunc.config,
-        function_definition=metafunc.definition,
+        nodeid=metafunc.definition.nodeid,
     )
 
+    argnames = []
     aggregates = []
-    args = {}
 
-    for name in argnames:
+    for name in _argnames:
         try:
             name, suffix = name.split(".", 1)
         except ValueError:
-            args[name] = False
-
             def aggregate(values, val, name=name):
                 values.setdefault(name, val)
-        else:
-            args[name] = True
 
+        else:
             def aggregate(values, val, name=name, suffix=suffix):
-                if suffix == '*':
-                    values[name].update(val)
-                else:
-                    values[name].setdefault(suffix, val)
+                values[name].setdefault(suffix, val)
+        finally:
+            argnames.append(name)
 
         aggregates.append(aggregate)
 
-    indirect = [name for name, indirect in args.items() if indirect]
 
     def aggregate(param):
         values = defaultdict(dict)
@@ -71,103 +68,148 @@ def parametrize_indirect(metafunc, mark):
         for aggregate, value in zip(aggregates, param.values):
             aggregate(values, value)
 
-        # TODO: move to own_markers instead of marking each ParameterSet
         return ParameterSet(
-            values.values(),
-            marks=[pytest.mark.nest_indirect(*indirect)] + list(param.marks),
+            values=values.values(),
+            marks=param.marks,
             id=param.id,
         )
 
-    mark_indirect = mark.kwargs.setdefault("indirect", [])
-
-    if mark_indirect is not True:
-        mark.kwargs["indirect"] = sorted(
-            list(set(mark_indirect + indirect))
-        )  # remove duplicates
-
-    return Mark(
-        name=mark.name,
-        args=(tuple(args.keys()), [aggregate(param) for param in params]),
-        kwargs=mark.kwargs,
-    )
+    return pytest.mark.parametrize(
+        argnames,
+        [aggregate(param) for param in params],
+        **mark.kwargs,
+    ).mark
 
 
-def pytest_configure(config):
-    # Monkeypatch pytest to support multiple parametrize() marks with the same
-    # argument name.
-    #
-    # This is needed to support nesting:
-    #
-    #     @pytest.mark.parametrize('foo.some_option', [1])
-    #     @pytest.mark.parametrize('foo.another_option', [2])
-    #     def test_nesting(request, foo):
-    #         assert foo.some_option == 1
-    #         assert foo.another_option == 2
-    _setmulti2 = python.CallSpec2.setmulti2
+def is_indirect_fixture(metafunc, argname):
+    try:
+        fixturedefs = metafunc.fixtureinfo.name2fixturedefs[argname]
+    except KeyError:
+        return False
+    else:
+        return any(f.indirect for f in fixturedefs)
 
-    def setmulti2(self, valtypes, argnames, valset, id, marks, scopenum, param_index):
-        try:
-            nest_mark = next(m for m in marks if m.name == "nest_indirect")
-        except StopIteration:
-            return _setmulti2(
-                self, valtypes, argnames, valset, id, marks, scopenum, param_index
-            )
 
-        for arg, val in zip(argnames, valset):
-            valtype_for_arg = valtypes[arg]
 
-            if arg in nest_mark.args:
-                # merge request.param dictionaries instead of overwriting the
-                # value
-                val.update(getattr(self, valtype_for_arg).get(arg, {}))
-            else:
-                self._checkargnotcontained(arg)
-
-            getattr(self, valtype_for_arg)[arg] = val
-            self.indices[arg] = param_index
-            self._arg2scopenum[arg] = scopenum
-        self._idlist.append(id)
-        self.marks.extend(normalize_mark_list(marks))
-
-    python.CallSpec2.setmulti2 = setmulti2
-
-    # Monkeypatch pytest to add fixture(indirect=) argument
-    #
-    # This is needed to provide empty defaults in request.params when
-    # test function is not explicitly parametrized
-    _fixture = pytest.fixture
-
-    def fixture(*args, indirect=False, **kwargs):
-        decorator = _fixture(*args, **kwargs)
-
-        if isinstance(decorator, fixtures.FixtureFunctionMarker):
-            def decorate(function):
-                function.__indirect__ = indirect
-                return decorator(function)
-
-            return decorate
-
-        return decorator
-
-    pytest.fixture = fixture
-
-    # register marker for nesting
-    config.addinivalue_line(
-        "markers", "nest_indirect",
-    )
-
-def pytest_fixture_setup(fixturedef, request):
-    if hasattr(fixturedef.func, "__indirect__") and not hasattr(request, "param"):
-        request.param = {}
+def parametrize_shortcut(metafunc, mark):
+    if is_indirect_fixture(metafunc, mark.name):
+        return pytest.mark.parametrize(
+            mark.name,
+            [mark.kwargs]
+        ).mark
+    else:
+        return mark
 
 
 def pytest_generate_tests(metafunc):
-    shortcut_markers = []
-
-    for mark in metafunc.definition.own_markers:
-        if mark.name in metafunc.definition.fixturenames:
-            shortcut_markers.append(Mark(name='parametrize', args=[('%s.*' % mark.name,), [(mark.kwargs,)]], kwargs={}))
+    metafunc.definition.own_markers = [
+        parametrize_shortcut(metafunc, mark)
+        for mark in metafunc.definition.iter_markers()
+    ]
 
     metafunc.definition.own_markers = [
-        parametrize_indirect(metafunc, mark) for mark in metafunc.definition.own_markers + shortcut_markers
+        collapse_indirect(metafunc, mark)
+        for mark in metafunc.definition.own_markers
     ]
+
+    # FIXME: after collapsing remove parametrizations of indirect fixtures from parents
+    metafunc.definition.parent = None
+
+    own_markers = []
+    indirect_params = defaultdict(dict)
+
+    # HERE BE DRAGONS
+    has_direct = set()
+
+    for mark in metafunc.definition.own_markers:
+        indirect_params2 = deepcopy(indirect_params)
+
+        if mark.name != 'parametrize':
+            own_markers.append(mark)
+            continue
+
+        indirect_argnames = {
+            name: index
+            for index, name in enumerate(mark.args[0])
+            if is_indirect_fixture(metafunc, name)
+        }
+
+        indirect_argindexes = {
+            index: name
+            for index, name in enumerate(mark.args[0])
+            if is_indirect_fixture(metafunc, name)
+        }
+
+        direct_argnames = [
+            name
+            for name in mark.args[0]
+            if not name in indirect_argnames
+        ]
+
+        params = []
+
+        for param in mark.args[1]:
+            for index, value in enumerate(param.values):
+                try:
+                    argname = indirect_argindexes[index]
+                except KeyError:
+                    pass
+                else:
+                    indirect_params2[argname].update(value)
+
+            params.append(
+                ParameterSet(
+                    values=
+                        [value for index, value in enumerate(param.values) if not index in indirect_argindexes] +
+                        [deepcopy(i) for i in indirect_params2.values()],
+                    marks=param.marks,
+                    id=param.id,
+                )
+            )
+
+        for k, v in indirect_params2.items():
+            indirect_params[k] = {**v, **indirect_params[k]}
+
+        if direct_argnames:
+            own_markers.append(
+                pytest.mark.parametrize(
+                    [*direct_argnames, *indirect_params.keys()],
+                    params,
+                    **mark.kwargs,
+                ).mark
+            )
+
+            has_direct.update({*direct_argnames, *indirect_params.keys()})
+
+
+    own_markers.append(
+        pytest.mark.parametrize(
+            list(k for k,v in indirect_params.items() if k not in has_direct),
+            [
+                ParameterSet(
+                    values=list(v for k,v in indirect_params.items() if k not in has_direct),
+                    marks=[],
+                    id=None,
+                )
+            ]
+        ).mark
+    )
+
+    metafunc.definition.own_markers = own_markers
+    print(metafunc.function.__name__, metafunc.definition.own_markers)
+
+    # if user provided parameters for indirect fixtures, strip the defaults from callspec params
+    parametrized = set()
+
+    for mark in metafunc.definition.own_markers:
+        if mark.name != "parametrize":
+            continue
+
+        parametrized.update(
+            arg for arg in mark.args[0]
+            if is_indirect_fixture(metafunc, arg)
+        )
+
+    for callspec in metafunc._calls:
+        for p in parametrized:
+            callspec.params.pop(p, None)

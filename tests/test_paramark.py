@@ -14,12 +14,12 @@ class Bar:
 
 
 # fmt: off
-@pytest.fixture(indirect=True)
+@pytest.fixture(indirect=True, params=[{}])
 def foo(request):
     return Foo(**request.param)
 
 
-@pytest.fixture(indirect=True)
+@pytest.fixture(indirect=True, params=[{}])
 def bar(request):
     return Bar(**request.param)
 
@@ -42,6 +42,26 @@ def test_default(foo, bar):
 def test_fixture_and_argument(foo, foo_plus_three):
     assert foo.some_option + 3 == foo_plus_three
 
+
+@pytest.mark.parametrize(
+    'qux',
+    [
+        4,
+        10
+    ]
+)
+@pytest.mark.parametrize(
+    'foo.some_option',
+    [
+        1,
+        2
+    ],
+)
+def test_fixture_and_argument_product(foo, qux):
+    assert foo.some_option in [1,2]
+    assert qux in [4,10]
+
+
 @pytest.mark.parametrize(
     ('foo.some_option', 'bar.some_option',),
     [
@@ -51,6 +71,36 @@ def test_fixture_and_argument(foo, foo_plus_three):
 )
 def test_two_fixtures(foo, bar):
     assert foo.some_option + bar.some_option == 10
+
+
+@pytest.mark.parametrize(
+    'foo',
+    [
+        pytest.param(dict(some_option=5, another_option=5), id="five-five"),
+        pytest.param(dict(some_option=3, another_option=7), id="three-seven"),
+        pytest.param(dict(some_option=1, another_option=9), id="one-nine"),
+    ]
+)
+def test_parametrized_complete(foo):
+    assert foo.some_option + foo.another_option == 10
+
+
+@pytest.mark.parametrize(
+    'foo',
+    [
+        dict(some_option=5, another_option=5),
+        dict(some_option=3, another_option=7),
+        dict(some_option=1, another_option=9),
+    ]
+)
+@pytest.mark.parametrize(
+    'foo',
+    [
+        pytest.param(dict(some_option=2, another_option=8)),
+    ]
+)
+def test_parametrized_override_complete(foo):
+    assert foo.some_option + foo.another_option == 10
 
 
 @pytest.mark.parametrize(
@@ -66,31 +116,47 @@ def test_two_fixtures(foo, bar):
         6,
     ]
 )
-def test_parametrized_nesting(request, foo):
+def test_parametrized_update(foo):
     assert foo.some_option == 0x420
     assert foo.another_option in (5, 6)
 
 
 @pytest.mark.parametrize(
-    'foo.*',
+    'foo',
     [
-        dict(some_option=0x420),
+        dict(some_option=0x420, another_option='no override'),
     ]
 )
-def test_indirect(request, foo):
-    assert foo.some_option == 0x420
+@pytest.mark.parametrize(
+    "foo.some_option",
+    [
+        "override"
+    ]
+)
+def test_parametrized_override(foo):
+    assert foo.some_option == "override"
+    assert foo.another_option == "no override"
+
+
+@pytest.mark.parametrize('foo.some_option', [3])
+@pytest.mark.parametrize('foo.some_option', [1])
+@pytest.mark.parametrize('foo.some_option', [2])
+def test_parametrized_override_closest(foo):
+    assert foo.some_option == 2
 
 
 @pytest.mark.parametrize(
     ('foo.some_option', 'qux', 'bar.another_option'),
     [
-        (0x420, 'qux', 5),
+        (0x420, 'QUX', 5),
     ]
 )
 def test_parametrized_mixed(foo, bar, qux):
     assert foo.some_option == 0x420
     assert bar.another_option == 5
-    assert qux == 'qux'
+    assert qux == 'QUX'
+
+
 
 @pytest.mark.foo(some_option=24, another_option='five')
 def test_shortcut(foo, bar):
@@ -101,15 +167,21 @@ def test_shortcut(foo, bar):
     assert bar.another_option is False
 
 
-@pytest.mark.parametrize('foo.some_option', [3])
-@pytest.mark.parametrize('foo.some_option', [1])
-@pytest.mark.parametrize('foo.some_option', [2])
-def test_closest(foo):
-    assert foo.some_option == 2
-
-
 @pytest.mark.foo(some_option=3)
 @pytest.mark.foo(some_option=1)
 @pytest.mark.foo(some_option=2)
-def test_closest_shortcut(foo):
+def test_shortcut_override_closest(foo):
     assert foo.some_option == 2
+
+
+@pytest.mark.parametrize(
+    'foo',
+    [dict(some_option=2)]
+)
+@pytest.mark.parametrize(
+    'qux',
+    ['QUX']
+)
+def test_parametrized_nonfixture(foo, qux):
+    assert foo.some_option == 2
+    assert qux == 'QUX'
