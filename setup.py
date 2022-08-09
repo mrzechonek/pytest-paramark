@@ -29,7 +29,6 @@ setup(
     python_requires='>=3.4',
     setup_requires=['pytest-runner>=4.2'],
     install_requires=['pytest>=4.5.0'],
-    tests_require=['namedlist'],
     classifiers=[
         'Development Status :: 4 - Beta',
         'Framework :: Pytest',

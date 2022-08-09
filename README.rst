@@ -138,7 +138,7 @@ nesting them:
 
 
     # all fixture params
-    @pytest.mark.parametrize('foo.*', [dict(first=1, second=2)])
+    @pytest.mark.parametrize('foo', [dict(first=1, second=2)])
     def test_options(foo):
         assert foo['first'] == 1
         assert bar['second'] == 2
